@@ -1,7 +1,7 @@
 name: libreria_2026
 description: Mi Lector Pro — Biblioteca personal multimedia
 publish_to: 'none'
-version: 1.0.0+6
+version: 1.0.7+7
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -12,6 +12,7 @@ dependencies:
 
   # ── Lectura de documentos ─────────────────────────────────────────────────
   pdfx: ^2.6.0
+  syncfusion_flutter_pdf: ^24.2.8
   epub_parser: ^3.0.1
   flutter_html: ^3.0.0-beta.2
   archive: ^3.6.1

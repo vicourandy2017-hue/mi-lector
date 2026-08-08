@@ -21,8 +21,21 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import 'package:archive/archive.dart';
 import 'package:xml/xml.dart' as xml;
+import 'package:syncfusion_flutter_pdf/pdf.dart' as syncpdf;
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.light,
+      systemNavigationBarDividerColor: Colors.transparent,
+    ),
+  );
   runApp(const MiLectorApp());
 }
 
@@ -2168,6 +2181,7 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
   final AudioPlayer _playerEfectoPagina = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
   bool estaLeyendoVoz = false;
+  PDFViewController? _pdfViewController;
 
   @override
   void initState() {
@@ -2198,15 +2212,50 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
 
   void _initTtsPdf() async {
     try {
-      await _flutterTts.setLanguage("es-ES");
+      await _configurarVozLatinoamericana(_flutterTts);
       await _flutterTts.setPitch(1.0);
       double velocidadAjustada = widget.ajustes.velocidadVoz > 0.8 ? 0.5 : widget.ajustes.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
-      _flutterTts.setCompletionHandler(() {
-        if (mounted) setState(() => estaLeyendoVoz = false);
+      _flutterTts.setCompletionHandler(() async {
+        if (mounted && estaLeyendoVoz) {
+          if (paginaActual < totalPaginas - 1) {
+            final proximaPagina = paginaActual + 1;
+            await _pdfViewController?.setPage(proximaPagina);
+            if (!mounted) return;
+            setState(() {
+              paginaActual = proximaPagina;
+            });
+            await _leerTextoPaginaPdf(proximaPagina);
+          } else {
+            setState(() => estaLeyendoVoz = false);
+          }
+        }
       });
     } catch (e) {
       debugPrint('Error inicializando TTS en PDF: $e');
+    }
+  }
+
+  Future<void> _configurarVozLatinoamericana(FlutterTts tts) async {
+    try {
+      final List<dynamic> lenguajes = await tts.getLanguages;
+      String lenguajeSeleccionado = "es-MX";
+      for (var l in lenguajes) {
+        String langStr = l.toString().toLowerCase();
+        if (langStr.contains("es-mx") || langStr.contains("es_mx")) {
+          lenguajeSeleccionado = "es-MX";
+          break;
+        } else if (langStr.contains("es-419") || langStr.contains("es_419")) {
+          lenguajeSeleccionado = "es-419";
+          break;
+        } else if (langStr.contains("es-us") || langStr.contains("es_us")) {
+          lenguajeSeleccionado = "es-US";
+          break;
+        }
+      }
+      await tts.setLanguage(lenguajeSeleccionado);
+    } catch (e) {
+      await tts.setLanguage("es-MX");
     }
   }
 
@@ -2216,15 +2265,56 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
         await _flutterTts.stop();
         if (!mounted) return;
         setState(() => estaLeyendoVoz = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⏸️ Lectura en voz alta pausada'),
+            duration: Duration(seconds: 2),
+          ),
+        );
       } else {
         if (!mounted) return;
         setState(() => estaLeyendoVoz = true);
-        await _flutterTts.speak("Leyendo página ${paginaActual + 1} de ${widget.libro.titulo}");
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('🗣️ Leyendo página ${paginaActual + 1} en Español Latino...'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        await _leerTextoPaginaPdf(paginaActual);
       }
     } catch (e) {
       debugPrint('Error en voz PDF: $e');
       if (!mounted) return;
       setState(() => estaLeyendoVoz = false);
+    }
+  }
+
+  Future<void> _leerTextoPaginaPdf(int numPagina) async {
+    try {
+      final file = File(widget.libro.rutaLocal);
+      if (!await file.exists()) {
+        await _flutterTts.speak("Página ${numPagina + 1}");
+        return;
+      }
+      final bytes = await file.readAsBytes();
+      final syncpdf.PdfDocument document = syncpdf.PdfDocument(inputBytes: bytes);
+      final String textoPagina = syncpdf.PdfTextExtractor(document).extractText(
+        startPageIndex: numPagina,
+        endPageIndex: numPagina,
+      ).trim();
+      document.dispose();
+
+      if (!mounted || !estaLeyendoVoz) return;
+
+      if (textoPagina.isNotEmpty) {
+        final textoLimpio = textoPagina.replaceAll(RegExp(r'\s+'), ' ');
+        await _flutterTts.speak(textoLimpio);
+      } else {
+        await _flutterTts.speak("Página ${numPagina + 1}");
+      }
+    } catch (e) {
+      debugPrint('Error leyendo párrafo PDF: $e');
+      await _flutterTts.speak("Leyendo página ${numPagina + 1}");
     }
   }
 
@@ -2492,6 +2582,7 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
                           autoSpacing: false,
                           pageFling: true,
                           defaultPage: widget.libro.ultimaPagina > 0 ? widget.libro.ultimaPagina - 1 : 0,
+                          onViewCreated: (controller) => _pdfViewController = controller,
                           onRender: (pages) => setState(() {
                             totalPaginas = pages ?? 0;
                             cargandoDocumento = false;
@@ -2696,7 +2787,19 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
 
   void _initTts() async {
     try {
-      await _flutterTts.setLanguage("es-ES");
+      try {
+        final List<dynamic> lenguajes = await _flutterTts.getLanguages;
+        String langSel = "es-MX";
+        for (var l in lenguajes) {
+          String s = l.toString().toLowerCase();
+          if (s.contains("es-mx") || s.contains("es_mx")) { langSel = "es-MX"; break; }
+          if (s.contains("es-419") || s.contains("es_419")) { langSel = "es-419"; break; }
+          if (s.contains("es-us") || s.contains("es_us")) { langSel = "es-US"; break; }
+        }
+        await _flutterTts.setLanguage(langSel);
+      } catch (e) {
+        await _flutterTts.setLanguage("es-MX");
+      }
       await _flutterTts.setPitch(1.0);
       double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.5 : widget.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
@@ -2985,7 +3088,19 @@ class _PantallaLectorDocxState extends State<PantallaLectorDocx> {
 
   void _initTtsDocx() async {
     try {
-      await _flutterTts.setLanguage("es-ES");
+      try {
+        final List<dynamic> lenguajes = await _flutterTts.getLanguages;
+        String langSel = "es-MX";
+        for (var l in lenguajes) {
+          String s = l.toString().toLowerCase();
+          if (s.contains("es-mx") || s.contains("es_mx")) { langSel = "es-MX"; break; }
+          if (s.contains("es-419") || s.contains("es_419")) { langSel = "es-419"; break; }
+          if (s.contains("es-us") || s.contains("es_us")) { langSel = "es-US"; break; }
+        }
+        await _flutterTts.setLanguage(langSel);
+      } catch (e) {
+        await _flutterTts.setLanguage("es-MX");
+      }
       await _flutterTts.setPitch(1.0);
       double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.5 : widget.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
