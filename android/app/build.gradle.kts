@@ -4,21 +4,21 @@ plugins {
 }
 
 android {
-    namespace = "com.example.mi_lector"
+    namespace = "com.example.libreria_2026"
     compileSdk = 36
-    ndkVersion = "28.2.13676358"
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
 
     defaultConfig {
-        applicationId = "com.example.mi_lector"
+        applicationId = "com.example.libreria_2026"
         minSdk = flutter.minSdkVersion
-        targetSdk = 36
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        targetSdk = flutter.targetSdkVersion
+        versionCode = 6
+        versionName = "1.0.0"
     }
 
     buildTypes {
@@ -30,7 +30,7 @@ android {
 
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
     }
 }
 

@@ -1,26 +1,30 @@
-// Test básico de arranque para Mi Lector Pro.
+// This is a basic Flutter widget test.
 //
-// Verifica que la app inicia correctamente y muestra la pantalla principal
-// de la biblioteca, sin quedarse "pegada" en un error de construcción.
+// To perform an interaction with a widget in your test, use the WidgetTester
+// utility in the flutter_test package. For example, you can send tap and scroll
+// gestures. You can also use WidgetTester to find child widgets in the widget
+// tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mi_lector/main.dart';
+import 'package:libreria_2026/main.dart';
 
 void main() {
-  testWidgets('Mi Lector Pro inicia y muestra la biblioteca', (WidgetTester tester) async {
-    // Construye la app y dispara un frame.
+  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+    // Build our app and trigger a frame.
     await tester.pumpWidget(const MiLectorApp());
 
-    // Deja que las tareas asíncronas iniciales (cargar SharedPreferences, etc.)
-    // terminen antes de verificar la interfaz.
-    await tester.pumpAndSettle();
+    // Verify that our counter starts at 0.
+    expect(find.text('0'), findsOneWidget);
+    expect(find.text('1'), findsNothing);
 
-    // Verifica que aparece el título de la sección inicial de la biblioteca.
-    expect(find.text('Libros y documentos'), findsOneWidget);
+    // Tap the '+' icon and trigger a frame.
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pump();
 
-    // Verifica que el botón para agregar libros está presente.
-    expect(find.text('Agregar libro'), findsOneWidget);
+    // Verify that our counter has incremented.
+    expect(find.text('0'), findsNothing);
+    expect(find.text('1'), findsOneWidget);
   });
 }
