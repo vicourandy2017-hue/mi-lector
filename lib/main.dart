@@ -2212,9 +2212,8 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
 
   void _initTtsPdf() async {
     try {
-      await _configurarVozLatinoamericana(_flutterTts);
-      await _flutterTts.setPitch(1.0);
-      double velocidadAjustada = widget.ajustes.velocidadVoz > 0.8 ? 0.5 : widget.ajustes.velocidadVoz;
+      await _configurarVozHombreLatino(_flutterTts);
+      double velocidadAjustada = widget.ajustes.velocidadVoz > 0.8 ? 0.45 : widget.ajustes.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
       _flutterTts.setCompletionHandler(() async {
         if (mounted && estaLeyendoVoz) {
@@ -2236,26 +2235,48 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
     }
   }
 
-  Future<void> _configurarVozLatinoamericana(FlutterTts tts) async {
+  Future<void> _configurarVozHombreLatino(FlutterTts tts) async {
     try {
-      final List<dynamic> lenguajes = await tts.getLanguages;
-      String lenguajeSeleccionado = "es-MX";
-      for (var l in lenguajes) {
-        String langStr = l.toString().toLowerCase();
-        if (langStr.contains("es-mx") || langStr.contains("es_mx")) {
-          lenguajeSeleccionado = "es-MX";
-          break;
-        } else if (langStr.contains("es-419") || langStr.contains("es_419")) {
-          lenguajeSeleccionado = "es-419";
-          break;
-        } else if (langStr.contains("es-us") || langStr.contains("es_us")) {
-          lenguajeSeleccionado = "es-US";
-          break;
+      await tts.setPitch(0.85);
+      final List<dynamic>? voces = await tts.getVoices;
+      if (voces != null && voces.isNotEmpty) {
+        Map<String, String>? vozMasculinaLatino;
+        Map<String, String>? vozLatino;
+
+        for (var v in voces) {
+          if (v is Map) {
+            final String name = (v['name'] ?? '').toString().toLowerCase();
+            final String locale = (v['locale'] ?? '').toString().toLowerCase();
+
+            bool esEspanol = locale.contains('es') || name.contains('es-') || name.contains('es_');
+            bool esLatino = locale.contains('mx') || locale.contains('419') || locale.contains('co') || locale.contains('us') ||
+                            name.contains('mx') || name.contains('419') || name.contains('co') || name.contains('us');
+            bool esHombre = name.contains('male') || name.contains('hombre') || name.contains('man') ||
+                            name.contains('guy') || name.contains('-b-') || name.contains('-d-') || name.contains('sfg') || name.contains('sfd');
+
+            if (esEspanol && esLatino && esHombre) {
+              vozMasculinaLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
+              break;
+            } else if (esEspanol && esHombre && vozMasculinaLatino == null) {
+              vozMasculinaLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
+            } else if (esEspanol && esLatino && vozLatino == null) {
+              vozLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
+            }
+          }
+        }
+
+        if (vozMasculinaLatino != null) {
+          await tts.setVoice(vozMasculinaLatino);
+          return;
+        } else if (vozLatino != null) {
+          await tts.setVoice(vozLatino);
+          return;
         }
       }
-      await tts.setLanguage(lenguajeSeleccionado);
+      await tts.setLanguage("es-MX");
     } catch (e) {
       await tts.setLanguage("es-MX");
+      await tts.setPitch(0.85);
     }
   }
 
@@ -2787,21 +2808,28 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
 
   void _initTts() async {
     try {
+      await _flutterTts.setPitch(0.85);
       try {
-        final List<dynamic> lenguajes = await _flutterTts.getLanguages;
-        String langSel = "es-MX";
-        for (var l in lenguajes) {
-          String s = l.toString().toLowerCase();
-          if (s.contains("es-mx") || s.contains("es_mx")) { langSel = "es-MX"; break; }
-          if (s.contains("es-419") || s.contains("es_419")) { langSel = "es-419"; break; }
-          if (s.contains("es-us") || s.contains("es_us")) { langSel = "es-US"; break; }
+        final List<dynamic>? voces = await _flutterTts.getVoices;
+        if (voces != null && voces.isNotEmpty) {
+          for (var v in voces) {
+            if (v is Map) {
+              final String name = (v['name'] ?? '').toString().toLowerCase();
+              final String locale = (v['locale'] ?? '').toString().toLowerCase();
+              if ((locale.contains('es') || name.contains('es-')) &&
+                  (name.contains('male') || name.contains('hombre') || name.contains('man') || name.contains('-b-') || name.contains('-d-'))) {
+                await _flutterTts.setVoice({"name": v['name'].toString(), "locale": v['locale'].toString()});
+                break;
+              }
+            }
+          }
+        } else {
+          await _flutterTts.setLanguage("es-MX");
         }
-        await _flutterTts.setLanguage(langSel);
       } catch (e) {
         await _flutterTts.setLanguage("es-MX");
       }
-      await _flutterTts.setPitch(1.0);
-      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.5 : widget.velocidadVoz;
+      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.45 : widget.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
       _flutterTts.setCompletionHandler(() {
         if (mounted) {
@@ -3088,21 +3116,28 @@ class _PantallaLectorDocxState extends State<PantallaLectorDocx> {
 
   void _initTtsDocx() async {
     try {
+      await _flutterTts.setPitch(0.85);
       try {
-        final List<dynamic> lenguajes = await _flutterTts.getLanguages;
-        String langSel = "es-MX";
-        for (var l in lenguajes) {
-          String s = l.toString().toLowerCase();
-          if (s.contains("es-mx") || s.contains("es_mx")) { langSel = "es-MX"; break; }
-          if (s.contains("es-419") || s.contains("es_419")) { langSel = "es-419"; break; }
-          if (s.contains("es-us") || s.contains("es_us")) { langSel = "es-US"; break; }
+        final List<dynamic>? voces = await _flutterTts.getVoices;
+        if (voces != null && voces.isNotEmpty) {
+          for (var v in voces) {
+            if (v is Map) {
+              final String name = (v['name'] ?? '').toString().toLowerCase();
+              final String locale = (v['locale'] ?? '').toString().toLowerCase();
+              if ((locale.contains('es') || name.contains('es-')) &&
+                  (name.contains('male') || name.contains('hombre') || name.contains('man') || name.contains('-b-') || name.contains('-d-'))) {
+                await _flutterTts.setVoice({"name": v['name'].toString(), "locale": v['locale'].toString()});
+                break;
+              }
+            }
+          }
+        } else {
+          await _flutterTts.setLanguage("es-MX");
         }
-        await _flutterTts.setLanguage(langSel);
       } catch (e) {
         await _flutterTts.setLanguage("es-MX");
       }
-      await _flutterTts.setPitch(1.0);
-      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.5 : widget.velocidadVoz;
+      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.45 : widget.velocidadVoz;
       await _flutterTts.setSpeechRate(velocidadAjustada);
       _flutterTts.setCompletionHandler(() {
         if (mounted) {
