@@ -4059,7 +4059,7 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
       final result = await FilePicker.platform.pickFiles(
         type: FileType.any,
         allowMultiple: false,
-        withData: true,
+        withData: false,
         withReadStream: true,
       );
 
@@ -4069,34 +4069,6 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
 
       final archivoUnico = result.files.single;
       final nombre = archivoUnico.name;
-      List<int>? datosArchivo = archivoUnico.bytes;
-
-      if ((datosArchivo == null || datosArchivo.isEmpty) && archivoUnico.readStream != null) {
-        final buffer = <int>[];
-        await for (var chunk in archivoUnico.readStream!) {
-          buffer.addAll(chunk);
-        }
-        datosArchivo = buffer;
-      }
-
-      if ((datosArchivo == null || datosArchivo.isEmpty) && archivoUnico.path != null) {
-        try {
-          final localFile = File(archivoUnico.path!);
-          if (await localFile.exists()) {
-            datosArchivo = await localFile.readAsBytes();
-          }
-        } catch (_) {}
-      }
-
-      if (datosArchivo == null || datosArchivo.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No se pudo leer el contenido del archivo seleccionado.')),
-          );
-        }
-        return;
-      }
-
       final extValidas = ['pdf', 'mp3', 'm4a', 'wav', 'aac', 'epub', 'mp4', 'mov', 'mkv', 'avi', 'docx'];
       final extLower = nombre.contains('.') ? nombre.split('.').last.toLowerCase() : '';
 
@@ -4131,9 +4103,23 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
       final bool esVideo = ['mp4', 'mov', 'mkv', 'avi'].contains(extLower);
 
       final appDir = await getApplicationDocumentsDirectory();
-      final nuevaRuta = '${appDir.path}/$nombre';
+      final nuevaRuta = '${appDir.path}/${DateTime.now().millisecondsSinceEpoch}_$nombre';
       final archivoDestino = File(nuevaRuta);
-      await archivoDestino.writeAsBytes(datosArchivo);
+
+      if (archivoUnico.path != null && archivoUnico.path!.isNotEmpty && await File(archivoUnico.path!).exists()) {
+        await File(archivoUnico.path!).copy(nuevaRuta);
+      } else if (archivoUnico.readStream != null) {
+        final sink = archivoDestino.openWrite();
+        await for (var chunk in archivoUnico.readStream!) {
+          sink.add(chunk);
+        }
+        await sink.flush();
+        await sink.close();
+      } else if (archivoUnico.bytes != null && archivoUnico.bytes!.isNotEmpty) {
+        await archivoDestino.writeAsBytes(archivoUnico.bytes!);
+      } else {
+        throw Exception('No se pudo acceder a la ruta o flujo del archivo seleccionado.');
+      }
 
       final catInicial = (categoriaSeleccionada == 'Todas') ? 'General' : categoriaSeleccionada;
 
@@ -4260,28 +4246,37 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
         return;
       }
 
-      final result = await FilePicker.platform.pickFiles(type: FileType.audio, withData: true, withReadStream: true);
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.audio,
+        allowMultiple: false,
+        withData: false,
+        withReadStream: true,
+      );
       if (result == null || result.files.isEmpty) return;
 
       final pickedFile = result.files.single;
       final nombre = pickedFile.name;
-      List<int>? datosAudio = pickedFile.bytes;
-
-      if ((datosAudio == null || datosAudio.isEmpty) && pickedFile.readStream != null) {
-        final buffer = <int>[];
-        await for (var chunk in pickedFile.readStream!) {
-          buffer.addAll(chunk);
-        }
-        datosAudio = buffer;
-      }
-
-      if (datosAudio == null || datosAudio.isEmpty) return;
 
       final appDir = await getApplicationDocumentsDirectory();
       final carpetaMusica = Directory('${appDir.path}/musica_fondo');
       if (!await carpetaMusica.exists()) await carpetaMusica.create(recursive: true);
-      final nuevaRuta = '${carpetaMusica.path}/$nombre';
-      await File(nuevaRuta).writeAsBytes(datosAudio);
+      final nuevaRuta = '${carpetaMusica.path}/${DateTime.now().millisecondsSinceEpoch}_$nombre';
+      final archivoDestino = File(nuevaRuta);
+
+      if (pickedFile.path != null && pickedFile.path!.isNotEmpty && await File(pickedFile.path!).exists()) {
+        await File(pickedFile.path!).copy(nuevaRuta);
+      } else if (pickedFile.readStream != null) {
+        final sink = archivoDestino.openWrite();
+        await for (var chunk in pickedFile.readStream!) {
+          sink.add(chunk);
+        }
+        await sink.flush();
+        await sink.close();
+      } else if (pickedFile.bytes != null && pickedFile.bytes!.isNotEmpty) {
+        await archivoDestino.writeAsBytes(pickedFile.bytes!);
+      } else {
+        throw Exception('No se pudo leer la pista seleccionada.');
+      }
 
       final nuevaPista = PistaMusica(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
