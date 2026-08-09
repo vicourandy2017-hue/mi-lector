@@ -26,8 +26,8 @@ android {
         applicationId = "com.victor.milectorpro"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = 9
-        versionName = "1.0.9"
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
     }
 
     signingConfigs {
