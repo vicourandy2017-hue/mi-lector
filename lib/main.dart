@@ -159,6 +159,90 @@ class ColoresApp {
   };
 }
 
+class TextProcessorTTS {
+  static String prepararTextoParaTTS(String rawText) {
+    if (rawText.trim().isEmpty) return '';
+
+    // 1. Limpiar cualquier etiqueta HTML residual
+    String texto = rawText.replaceAll(RegExp(r'<[^>]*>'), ' ');
+
+    // 2. Corregir palabras divididas por guiones al final de línea (ej: "desarro-\nllador" -> "desarrollador")
+    texto = texto.replaceAllMapped(
+      RegExp(r'([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)-\s*[\r\n]+\s*([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)'),
+      (m) => '${m[1]}${m[2]}',
+    );
+
+    // 3. Convertir saltos de línea dobles o múltiples (párrafos) en pausas de punto final
+    texto = texto.replaceAll(RegExp(r'(\r?\n){2,}'), '. ');
+
+    // 4. Convertir saltos de línea simples (renglones del mismo párrafo) en UN ESPACIO SIMPLE.
+    //    Elimina las pausas artificiales o comas al saltar de renglón dentro de un párrafo.
+    texto = texto.replaceAll(RegExp(r'\r?\n'), ' ');
+
+    // 5. Normalizar palabras en MAYÚSCULAS para evitar que el motor TTS las deletree letra por letra.
+    //    Transforma títulos como "CAPÍTULO", "INTRODUCCIÓN", "BIBLIOTECA" en "Capítulo", "Introducción", "Biblioteca".
+    texto = texto.replaceAllMapped(
+      RegExp(r'\b([A-ZÁÉÍÓÚÑ]{2,})\b'),
+      (m) {
+        final word = m[1]!;
+        // Preservar números romanos comunes (I, II, III, IV, V, X, etc.)
+        if (RegExp(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)$').hasMatch(word)) {
+          return word;
+        }
+        return word[0].toUpperCase() + word.substring(1).toLowerCase();
+      },
+    );
+
+    // 6. Normalizar guiones de diálogo (— o –) a pausas limpias sin alterar palabras normales
+    texto = texto.replaceAll(RegExp(r'\s+[—–-]\s+'), '. ');
+
+    // 7. Garantizar espacio único tras signos de puntuación (. , ; : ? !) para pausas humanas naturales
+    texto = texto.replaceAllMapped(
+      RegExp(r'([.,;:?!])([a-zA-ZáéíóúÁÉÍÓÚñÑ])'),
+      (m) => '${m[1]} ${m[2]}',
+    );
+
+    // 8. Colapsar espacios múltiples y limpiar bordes
+    return texto.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
+}
+
+class NarradoresConfig {
+  static Future<void> aplicarNarrador(FlutterTts tts, String voiceName, {double rate = 0.45}) async {
+    try {
+      if (Platform.isAndroid) {
+        try {
+          await tts.setEngine("com.google.android.tts");
+        } catch (_) {}
+      }
+
+      await tts.setPitch(1.0);
+      await tts.setSpeechRate(rate);
+
+      if (voiceName.isNotEmpty && voiceName != 'Latino Natural' && voiceName != 'Sistema') {
+        final List<dynamic>? voces = await tts.getVoices;
+        if (voces != null && voces.isNotEmpty) {
+          for (var v in voces) {
+            if (v is Map) {
+              final String name = (v['name'] ?? '').toString();
+              if (name == voiceName) {
+                final String locale = (v['locale'] ?? 'es-MX').toString();
+                await tts.setVoice({"name": name, "locale": locale});
+                return;
+              }
+            }
+          }
+        }
+      }
+
+      await tts.setLanguage("es-MX");
+    } catch (e) {
+      await tts.setLanguage("es-MX");
+      await tts.setPitch(1.0);
+    }
+  }
+}
+
 class AjustesApp {
   String tipoFondo;
   String rutaFondoSeleccionado;
@@ -175,6 +259,10 @@ class AjustesApp {
   String? rutaSonidoPersonalizado;
   String ordenBiblioteca;
   String idioma;
+  String? _narradorSeleccionado;
+
+  String get narradorSeleccionado => _narradorSeleccionado ?? 'Latino Natural';
+  set narradorSeleccionado(String v) => _narradorSeleccionado = v;
 
   AjustesApp({
     this.tipoFondo = 'defecto',
@@ -192,7 +280,8 @@ class AjustesApp {
     this.rutaSonidoPersonalizado,
     this.ordenBiblioteca = 'Recientes',
     this.idioma = 'Español',
-  });
+    String narradorSeleccionado = 'Latino Natural',
+  }) : _narradorSeleccionado = narradorSeleccionado;
 }
 
 class TextosIdioma extends ChangeNotifier {
@@ -830,6 +919,7 @@ class BibliotecaRepository {
   static const _kRutaSonidoCustom = 'ruta_sonido_custom_global';
   static const _kOrdenBiblioteca = 'orden_biblioteca_global';
   static const _kIdioma = 'idioma_app';
+  static const _kNarrador = 'narrador_seleccionado_global';
 
   Future<List<Libro>> cargarLibros() async {
     final prefs = await SharedPreferences.getInstance();
@@ -893,6 +983,7 @@ class BibliotecaRepository {
       rutaSonidoPersonalizado: prefs.getString(_kRutaSonidoCustom),
       ordenBiblioteca: prefs.getString(_kOrdenBiblioteca) ?? 'Recientes',
       idioma: prefs.getString(_kIdioma) ?? 'Español',
+      narradorSeleccionado: prefs.getString(_kNarrador) ?? 'Latino Natural',
     );
   }
 
@@ -916,6 +1007,7 @@ class BibliotecaRepository {
     await prefs.setString(_kNombreSonido, ajustes.nombreSonidoActual);
     await prefs.setString(_kOrdenBiblioteca, ajustes.ordenBiblioteca);
     await prefs.setString(_kIdioma, ajustes.idioma);
+    await prefs.setString(_kNarrador, ajustes.narradorSeleccionado);
     if (ajustes.rutaSonidoPersonalizado != null) {
       await prefs.setString(_kRutaSonidoCustom, ajustes.rutaSonidoPersonalizado!);
     } else {
@@ -1270,22 +1362,28 @@ class PantallaBibliotecasDirectas extends StatelessWidget {
 
   static const List<Map<String, String>> _bibliotecas = [
     {
-      'nombre': 'Elejandría (Recomendada)',
-      'desc': 'Libros en español gratis en PDF y EPUB (Dominio público).',
-      'url': 'https://www.elejandria.com',
+      'nombre': 'Elejandría (Buscador y Descargas)',
+      'desc': 'Libros clásicos gratis en PDF y EPUB. Enlace directo al catálogo limpio sin rodeos.',
+      'url': 'https://www.elejandria.com/buscar',
       'icon': '📚',
     },
     {
-      'nombre': 'Proyecto Gutenberg',
-      'desc': 'Más de 70.000 libros gratuitos en EPUB y PDF clásicos.',
-      'url': 'https://www.gutenberg.org',
+      'nombre': 'Proyecto Gutenberg (Español)',
+      'desc': 'Más de 70.000 obras universales y clásicos de dominio público en español.',
+      'url': 'https://www.gutenberg.org/browse/languages/es',
       'icon': '🏛️',
     },
     {
       'nombre': 'Wikisource en Español',
-      'desc': 'Biblioteca colaborativa de novelas y ensayos clásicos.',
-      'url': 'https://es.wikisource.org',
+      'desc': 'Biblioteca digital libre de novelas, ensayos y documentos históricos en español.',
+      'url': 'https://es.wikisource.org/wiki/Portal:Literatura',
       'icon': '📝',
+    },
+    {
+      'nombre': 'Internet Archive (Biblioteca Abierta)',
+      'desc': 'Millones de libros y documentos de dominio público disponibles en español.',
+      'url': 'https://archive.org/details/texts?and[]=languageSorter%3A"Spanish"',
+      'icon': '🌐',
     },
   ];
 
@@ -1305,7 +1403,7 @@ class PantallaBibliotecasDirectas extends StatelessWidget {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
         const SizedBox(height: 6),
         const Text(
-          'Explora colecciones digitales de literatura clásica y textos de dominio público.',
+          'Explora colecciones digitales libres de derechos de autor con navegación limpia.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
         const SizedBox(height: 16),
@@ -1349,14 +1447,44 @@ class _PantallaVisorWebCompletoState extends State<PantallaVisorWebCompleto> {
       ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageFinished: (String url) {
+          onPageFinished: (String url) async {
             if (mounted) setState(() => cargando = false);
+            try {
+              await controller.runJavaScript('''
+                (function() {
+                  var selectors = [
+                    'ins.adsbygoogle',
+                    'div[id*="google_ads"]',
+                    'iframe[src*="google"]',
+                    'iframe[src*="doubleclick"]',
+                    'iframe[src*="amazon"]',
+                    'iframe[src*="ad"]',
+                    '.ad-container',
+                    '.ad-wrapper',
+                    '.adsbygoogle',
+                    '#pop-up',
+                    '.pop-up',
+                    '.banner-ad',
+                    '#ezoic-pub-ad-placeholder',
+                    '.elejandria-ad',
+                    '.advertisement'
+                  ];
+                  selectors.forEach(function(sel) {
+                    var elements = document.querySelectorAll(sel);
+                    elements.forEach(function(el) {
+                      el.style.display = 'none';
+                      el.remove();
+                    });
+                  });
+                })();
+              ''');
+            } catch (_) {}
           },
           onNavigationRequest: (NavigationRequest request) {
             final String urlLower = request.url.toLowerCase();
             final Uri? destino = Uri.tryParse(request.url);
             final bool esMismoDominio =
-                destino != null && destino.host.isNotEmpty && destino.host == _hostInicial;
+                destino != null && destino.host.isNotEmpty && (destino.host == _hostInicial || destino.host.contains('elejandria') || destino.host.contains('gutenberg') || destino.host.contains('wikisource') || destino.host.contains('archive'));
             final bool esEsquemaEspecial = urlLower.startsWith('intent://') ||
                 urlLower.startsWith('market://') ||
                 urlLower.startsWith('whatsapp://') ||
@@ -2212,9 +2340,11 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
 
   void _initTtsPdf() async {
     try {
-      await _configurarVozHombreLatino(_flutterTts);
-      double velocidadAjustada = widget.ajustes.velocidadVoz > 0.8 ? 0.45 : widget.ajustes.velocidadVoz;
-      await _flutterTts.setSpeechRate(velocidadAjustada);
+      await NarradoresConfig.aplicarNarrador(
+        _flutterTts,
+        widget.ajustes.narradorSeleccionado,
+        rate: widget.ajustes.velocidadVoz * 0.45,
+      );
       _flutterTts.setCompletionHandler(() async {
         if (mounted && estaLeyendoVoz) {
           if (paginaActual < totalPaginas - 1) {
@@ -2232,51 +2362,6 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
       });
     } catch (e) {
       debugPrint('Error inicializando TTS en PDF: $e');
-    }
-  }
-
-  Future<void> _configurarVozHombreLatino(FlutterTts tts) async {
-    try {
-      await tts.setPitch(0.85);
-      final List<dynamic>? voces = await tts.getVoices;
-      if (voces != null && voces.isNotEmpty) {
-        Map<String, String>? vozMasculinaLatino;
-        Map<String, String>? vozLatino;
-
-        for (var v in voces) {
-          if (v is Map) {
-            final String name = (v['name'] ?? '').toString().toLowerCase();
-            final String locale = (v['locale'] ?? '').toString().toLowerCase();
-
-            bool esEspanol = locale.contains('es') || name.contains('es-') || name.contains('es_');
-            bool esLatino = locale.contains('mx') || locale.contains('419') || locale.contains('co') || locale.contains('us') ||
-                            name.contains('mx') || name.contains('419') || name.contains('co') || name.contains('us');
-            bool esHombre = name.contains('male') || name.contains('hombre') || name.contains('man') ||
-                            name.contains('guy') || name.contains('-b-') || name.contains('-d-') || name.contains('sfg') || name.contains('sfd');
-
-            if (esEspanol && esLatino && esHombre) {
-              vozMasculinaLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
-              break;
-            } else if (esEspanol && esHombre && vozMasculinaLatino == null) {
-              vozMasculinaLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
-            } else if (esEspanol && esLatino && vozLatino == null) {
-              vozLatino = {"name": v['name'].toString(), "locale": v['locale'].toString()};
-            }
-          }
-        }
-
-        if (vozMasculinaLatino != null) {
-          await tts.setVoice(vozMasculinaLatino);
-          return;
-        } else if (vozLatino != null) {
-          await tts.setVoice(vozLatino);
-          return;
-        }
-      }
-      await tts.setLanguage("es-MX");
-    } catch (e) {
-      await tts.setLanguage("es-MX");
-      await tts.setPitch(0.85);
     }
   }
 
@@ -2328,8 +2413,8 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
       if (!mounted || !estaLeyendoVoz) return;
 
       if (textoPagina.isNotEmpty) {
-        final textoLimpio = textoPagina.replaceAll(RegExp(r'\s+'), ' ');
-        await _flutterTts.speak(textoLimpio);
+        final textoProcesado = TextProcessorTTS.prepararTextoParaTTS(textoPagina);
+        await _flutterTts.speak(textoProcesado);
       } else {
         await _flutterTts.speak("Página ${numPagina + 1}");
       }
@@ -2770,19 +2855,13 @@ class _PantallaLectorPDFState extends State<PantallaLectorPDF> {
 
 class PantallaLectorEpub extends StatefulWidget {
   final Libro libro;
-  final bool modoOscuro;
-  final bool modoSepia;
-  final double brillo;
-  final double velocidadVoz;
+  final AjustesApp ajustes;
   final List<PistaMusica> pistasMusica;
 
   const PantallaLectorEpub({
     super.key,
     required this.libro,
-    required this.modoOscuro,
-    required this.modoSepia,
-    required this.brillo,
-    required this.velocidadVoz,
+    required this.ajustes,
     this.pistasMusica = const [],
   });
 
@@ -2808,29 +2887,11 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
 
   void _initTts() async {
     try {
-      await _flutterTts.setPitch(0.85);
-      try {
-        final List<dynamic>? voces = await _flutterTts.getVoices;
-        if (voces != null && voces.isNotEmpty) {
-          for (var v in voces) {
-            if (v is Map) {
-              final String name = (v['name'] ?? '').toString().toLowerCase();
-              final String locale = (v['locale'] ?? '').toString().toLowerCase();
-              if ((locale.contains('es') || name.contains('es-')) &&
-                  (name.contains('male') || name.contains('hombre') || name.contains('man') || name.contains('-b-') || name.contains('-d-'))) {
-                await _flutterTts.setVoice({"name": v['name'].toString(), "locale": v['locale'].toString()});
-                break;
-              }
-            }
-          }
-        } else {
-          await _flutterTts.setLanguage("es-MX");
-        }
-      } catch (e) {
-        await _flutterTts.setLanguage("es-MX");
-      }
-      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.45 : widget.velocidadVoz;
-      await _flutterTts.setSpeechRate(velocidadAjustada);
+      await NarradoresConfig.aplicarNarrador(
+        _flutterTts,
+        widget.ajustes.narradorSeleccionado,
+        rate: widget.ajustes.velocidadVoz * 0.45,
+      );
       _flutterTts.setCompletionHandler(() {
         if (mounted) {
           setState(() {
@@ -2887,13 +2948,13 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
       if (estaLeyendoVoz) {
         await _flutterTts.stop();
       }
-      final textoLimpio = textoCapitulo.replaceAll(RegExp(r'<[^>]*>'), '');
+      final textoProcesado = TextProcessorTTS.prepararTextoParaTTS(textoCapitulo);
       if (!mounted) return;
       setState(() {
         estaLeyendoVoz = true;
         capituloLeyendoIndex = index;
       });
-      await _flutterTts.speak(textoLimpio);
+      await _flutterTts.speak(textoProcesado);
     } catch (e) {
       debugPrint('Error en lectura de voz: $e');
     }
@@ -2908,8 +2969,8 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = widget.modoSepia ? const Color(0xFFF4ECD8) : (widget.modoOscuro ? const Color(0xFF121212) : const Color(0xFFF5F5F5));
-    final textColor = widget.modoSepia ? Colors.black87 : (widget.modoOscuro ? Colors.white70 : Colors.black87);
+    final bgColor = widget.ajustes.modoSepia ? const Color(0xFFF4ECD8) : (widget.ajustes.modoOscuro ? const Color(0xFF121212) : const Color(0xFFF5F5F5));
+    final textColor = widget.ajustes.modoSepia ? Colors.black87 : (widget.ajustes.modoOscuro ? Colors.white70 : Colors.black87);
     final capitulos = _epubBook?.Chapters ?? <epubx.EpubChapter>[];
 
     return SafeArea(
@@ -3079,19 +3140,13 @@ class _PantallaLectorEpubState extends State<PantallaLectorEpub> {
 
 class PantallaLectorDocx extends StatefulWidget {
   final Libro libro;
-  final bool modoOscuro;
-  final bool modoSepia;
-  final double brillo;
-  final double velocidadVoz;
+  final AjustesApp ajustes;
   final List<PistaMusica> pistasMusica;
 
   const PantallaLectorDocx({
     super.key,
     required this.libro,
-    required this.modoOscuro,
-    required this.modoSepia,
-    required this.brillo,
-    required this.velocidadVoz,
+    required this.ajustes,
     this.pistasMusica = const [],
   });
 
@@ -3116,29 +3171,11 @@ class _PantallaLectorDocxState extends State<PantallaLectorDocx> {
 
   void _initTtsDocx() async {
     try {
-      await _flutterTts.setPitch(0.85);
-      try {
-        final List<dynamic>? voces = await _flutterTts.getVoices;
-        if (voces != null && voces.isNotEmpty) {
-          for (var v in voces) {
-            if (v is Map) {
-              final String name = (v['name'] ?? '').toString().toLowerCase();
-              final String locale = (v['locale'] ?? '').toString().toLowerCase();
-              if ((locale.contains('es') || name.contains('es-')) &&
-                  (name.contains('male') || name.contains('hombre') || name.contains('man') || name.contains('-b-') || name.contains('-d-'))) {
-                await _flutterTts.setVoice({"name": v['name'].toString(), "locale": v['locale'].toString()});
-                break;
-              }
-            }
-          }
-        } else {
-          await _flutterTts.setLanguage("es-MX");
-        }
-      } catch (e) {
-        await _flutterTts.setLanguage("es-MX");
-      }
-      double velocidadAjustada = widget.velocidadVoz > 0.8 ? 0.45 : widget.velocidadVoz;
-      await _flutterTts.setSpeechRate(velocidadAjustada);
+      await NarradoresConfig.aplicarNarrador(
+        _flutterTts,
+        widget.ajustes.narradorSeleccionado,
+        rate: widget.ajustes.velocidadVoz * 0.45,
+      );
       _flutterTts.setCompletionHandler(() {
         if (mounted) {
           setState(() {
@@ -3190,7 +3227,8 @@ class _PantallaLectorDocxState extends State<PantallaLectorDocx> {
         if (_contenidoTexto.trim().isEmpty) return;
         if (!mounted) return;
         setState(() => estaLeyendoVoz = true);
-        await _flutterTts.speak(_contenidoTexto);
+        final textoProcesado = TextProcessorTTS.prepararTextoParaTTS(_contenidoTexto);
+        await _flutterTts.speak(textoProcesado);
       }
     } catch (e) {
       debugPrint('Error en lectura de voz DOCX: $e');
@@ -3206,8 +3244,8 @@ class _PantallaLectorDocxState extends State<PantallaLectorDocx> {
 
   @override
   Widget build(BuildContext context) {
-    final bgColor = widget.modoSepia ? const Color(0xFFF4ECD8) : (widget.modoOscuro ? const Color(0xFF121212) : const Color(0xFFF5F5F5));
-    final textColor = widget.modoSepia ? Colors.black87 : (widget.modoOscuro ? Colors.white70 : Colors.black87);
+    final bgColor = widget.ajustes.modoSepia ? const Color(0xFFF4ECD8) : (widget.ajustes.modoOscuro ? const Color(0xFF121212) : const Color(0xFFF5F5F5));
+    final textColor = widget.ajustes.modoSepia ? Colors.black87 : (widget.ajustes.modoOscuro ? Colors.white70 : Colors.black87);
 
     return SafeArea(
       child: Scaffold(
@@ -3619,10 +3657,7 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
         MaterialPageRoute(
           builder: (context) => PantallaLectorEpub(
             libro: libro,
-            modoOscuro: ajustes.modoOscuro,
-            modoSepia: ajustes.modoSepia,
-            brillo: ajustes.nivelBrillo,
-            velocidadVoz: ajustes.velocidadVoz,
+            ajustes: ajustes,
             pistasMusica: pistasMusica,
           ),
         ),
@@ -3633,10 +3668,7 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
         MaterialPageRoute(
           builder: (context) => PantallaLectorDocx(
             libro: libro,
-            modoOscuro: ajustes.modoOscuro,
-            modoSepia: ajustes.modoSepia,
-            brillo: ajustes.nivelBrillo,
-            velocidadVoz: ajustes.velocidadVoz,
+            ajustes: ajustes,
             pistasMusica: pistasMusica,
           ),
         ),
@@ -4581,6 +4613,202 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
     );
   }
 
+  void _mostrarSelectorNarrador(StateSetter setModalState) {
+    final ttsPreview = FlutterTts();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: ColoresApp.fondoTarjeta,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Container(
+                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)),
+                    ),
+                    const SizedBox(height: 12),
+                    const Row(
+                      children: [
+                        Icon(Icons.record_voice_over_rounded, color: ColoresApp.acento, size: 24),
+                        SizedBox(width: 10),
+                        Text('Voces Instaladas en tu Dispositivo', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17)),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Elige la voz instalada del sistema que leerá tus libros con pronunciación y pausas naturales.',
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(color: Colors.white12),
+                    Expanded(
+                      child: FutureBuilder<dynamic>(
+                        future: ttsPreview.getVoices,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState == ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(color: ColoresApp.acento),
+                            );
+                          }
+
+                          if (!snapshot.hasData || snapshot.data == null) {
+                            return const Center(
+                              child: Text('No se detectaron voces en el dispositivo', style: TextStyle(color: Colors.white54)),
+                            );
+                          }
+
+                          final vocesEsp = (snapshot.data as List).where((v) {
+                            if (v is! Map) return false;
+                            final loc = (v['locale'] ?? '').toString().toLowerCase();
+                            final name = (v['name'] ?? '').toString().toLowerCase();
+                            return loc.startsWith('es') || name.contains('es-') || name.contains('es_');
+                          }).toList();
+
+                          if (vocesEsp.isEmpty) {
+                            return SingleChildScrollView(
+                              child: Column(
+                                children: [
+                                  const Icon(Icons.record_voice_over_outlined, color: Colors.white38, size: 48),
+                                  const SizedBox(height: 12),
+                                  const Text('No se encontraron voces instaladas en español', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 12),
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: ColoresApp.acento.withValues(alpha: 0.1),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: ColoresApp.acento.withValues(alpha: 0.3)),
+                                    ),
+                                    child: const Text(
+                                      '💡 Ve a Configuración de tu Android > Texto a Voz > "Servicios de Voz de Google" > Instalar datos de voz > Español (Alta Definición).',
+                                      style: TextStyle(color: Colors.white70, fontSize: 11),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          return ListView.builder(
+                            itemCount: vocesEsp.length,
+                            itemBuilder: (context, index) {
+                              final v = vocesEsp[index];
+                              final String vName = v['name'].toString();
+                              final String vLoc = v['locale'].toString();
+
+                              final bool esMale = vName.toLowerCase().contains('sfd') ||
+                                  vName.toLowerCase().contains('sfg') ||
+                                  vName.toLowerCase().contains('eed') ||
+                                  vName.toLowerCase().contains('male') ||
+                                  vName.toLowerCase().contains('hombre') ||
+                                  vName.toLowerCase().contains('-b-') ||
+                                  vName.toLowerCase().contains('-d-');
+
+                              final bool esHD = vName.toLowerCase().contains('network') ||
+                                  vName.toLowerCase().contains('hd') ||
+                                  vName.toLowerCase().contains('neural');
+
+                              final bool activo = ajustes.narradorSeleccionado == vName;
+
+                              return Container(
+                                margin: const EdgeInsets.symmetric(vertical: 4),
+                                child: Material(
+                                  color: activo ? ColoresApp.acento.withValues(alpha: 0.15) : Colors.white.withValues(alpha: 0.05),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: activo ? const BorderSide(color: ColoresApp.acento, width: 1.5) : BorderSide.none,
+                                  ),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                    leading: Container(
+                                      width: 44, height: 44,
+                                      decoration: BoxDecoration(
+                                        gradient: activo
+                                            ? const LinearGradient(colors: [ColoresApp.acento, ColoresApp.acentoOscuro])
+                                            : LinearGradient(colors: [Colors.white.withValues(alpha: 0.1), Colors.white.withValues(alpha: 0.05)]),
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Center(
+                                        child: Text(
+                                          esMale ? '👨' : '👩',
+                                          style: const TextStyle(fontSize: 22),
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      vName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: activo ? ColoresApp.acento : Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                    subtitle: Wrap(
+                                      spacing: 6,
+                                      runSpacing: 2,
+                                      children: [
+                                        Text('Idioma: $vLoc • ${esMale ? "Masculino" : "Femenino"}', style: TextStyle(color: activo ? ColoresApp.acento.withValues(alpha: 0.7) : Colors.white54, fontSize: 11)),
+                                        if (esHD)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                            decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
+                                            child: const Text('HD Neural', style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.bold)),
+                                          ),
+                                      ],
+                                    ),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(Icons.play_circle_filled_rounded, color: activo ? ColoresApp.acento : Colors.white38, size: 28),
+                                          onPressed: () async {
+                                            try {
+                                              await ttsPreview.stop();
+                                              await NarradoresConfig.aplicarNarrador(ttsPreview, vName);
+                                              final frasePrueba = TextProcessorTTS.prepararTextoParaTTS('Esta es una muestra de lectura fluida con la voz $vName del sistema. Respeta comas, puntos y pausas.');
+                                              await ttsPreview.speak(frasePrueba);
+                                            } catch (_) {}
+                                          },
+                                        ),
+                                        if (activo) const Icon(Icons.check_circle_rounded, color: ColoresApp.acento, size: 22),
+                                      ],
+                                    ),
+                                    onTap: () async {
+                                      await ttsPreview.stop();
+                                      setSheetState(() {});
+                                      setModalState(() => ajustes.narradorSeleccionado = vName);
+                                      setState(() {});
+                                      await _guardarAjustes();
+                                    },
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) => ttsPreview.stop());
+  }
+
   Future<void> _probarSonidoEfecto(String nombreTono) async {
     try {
       final rutaAsset = TonosEfectos.lista[nombreTono] ?? 'sounds/effect_1.mp3';
@@ -4844,6 +5072,12 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
                             title: 'Velocidad de Voz (TTS)',
                             currentValue: '${ajustes.velocidadVoz}x',
                             onTap: () => _mostrarSelectorVelocidadVoz(setModalState),
+                          ),
+                          _buildSelectorTile(
+                            icon: Icons.record_voice_over_rounded,
+                            title: 'Narrador de Voz',
+                            currentValue: ajustes.narradorSeleccionado,
+                            onTap: () => _mostrarSelectorNarrador(setModalState),
                           ),
                           _buildSwitchTile(
                             icon: Icons.volume_up_rounded,
@@ -5214,35 +5448,19 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
                               hintStyle: const TextStyle(color: Colors.grey),
                             ),
                           )
-                        : Text(TextosIdioma.instancia.get(seccionActual),
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    actions: [
-                      if (!buscando && seccionActual != 'descargar' && seccionActual != 'estadisticas')
-                        IconButton(
-                          icon: Icon(
-                            columnasGrid == 3 ? Icons.grid_view_rounded : Icons.view_module_rounded,
-                            color: ColoresApp.acento,
+                        : Text(
+                            TextosIdioma.instancia.get(seccionActual),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          tooltip: columnasGrid == 3 ? 'Vista de 2 columnas (Grande)' : 'Vista de 3 columnas (Compacta)',
-                          onPressed: () {
-                            setState(() {
-                              columnasGrid = (columnasGrid == 3) ? 2 : 3;
-                            });
-                          },
-                        ),
+                    actions: [
                       if (buscando && _searchController.text.isNotEmpty)
                         IconButton(
                           icon: const Icon(Icons.language, color: ColoresApp.acento),
                           tooltip: 'Buscar en Web',
                           onPressed: () => _buscarEnWeb(_searchController.text),
                         ),
-                      if (!buscando && seccionActual != 'descargar' && seccionActual != 'audiolibros' && seccionActual != 'videos' && seccionActual != 'documentos' && seccionActual != 'estadisticas')
-                        IconButton(icon: const Icon(Icons.sort), tooltip: 'Ordenar biblioteca', onPressed: _mostrarMenuOrden),
-                      IconButton(
-                        icon: const Icon(Icons.palette_rounded, color: ColoresApp.acento),
-                        tooltip: 'Personalizar apariencia',
-                        onPressed: _mostrarModalPersonalizarApariencia,
-                      ),
                       IconButton(
                         icon: Icon(buscando ? Icons.close : Icons.search),
                         onPressed: () {
@@ -5364,6 +5582,18 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
                               leading: Container(
                                 padding: const EdgeInsets.all(6),
                                 decoration: BoxDecoration(color: ColoresApp.fondoTarjeta, borderRadius: BorderRadius.circular(8)),
+                                child: const Icon(Icons.palette_rounded, color: ColoresApp.acento, size: 18),
+                              ),
+                              title: const Text('Personalizar Apariencia', style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)),
+                              onTap: () {
+                                Navigator.pop(context);
+                                _mostrarModalPersonalizarApariencia();
+                              },
+                            ),
+                            ListTile(
+                              leading: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(color: ColoresApp.fondoTarjeta, borderRadius: BorderRadius.circular(8)),
                                 child: const Icon(Icons.settings_rounded, color: ColoresApp.acento, size: 18),
                               ),
                               title: Text(TextosIdioma.instancia.get('config'), style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w500)),
@@ -5472,14 +5702,108 @@ class _PantallaPrincipalMiLectorState extends State<PantallaPrincipalMiLector> w
                                   ),
                                 ),
                                 IconButton(
-                                  icon: const Icon(Icons.add_circle_outline, color: ColoresApp.acento),
+                                  icon: const Icon(Icons.add_circle_outline, color: ColoresApp.acento, size: 20),
                                   tooltip: 'Nueva categoría',
                                   onPressed: _crearNuevaCategoria,
                                 ),
+                                IconButton(
+                                  icon: const Icon(Icons.sort_rounded, color: ColoresApp.acento, size: 20),
+                                  tooltip: 'Ordenar biblioteca',
+                                  onPressed: _mostrarMenuOrden,
+                                ),
+                                IconButton(
+                                  icon: Icon(
+                                    columnasGrid == 3 ? Icons.grid_view_rounded : Icons.view_module_rounded,
+                                    color: ColoresApp.acento,
+                                    size: 20,
+                                  ),
+                                  tooltip: columnasGrid == 3 ? 'Vista de 2 columnas (Grande)' : 'Vista de 3 columnas (Compacta)',
+                                  onPressed: () {
+                                    setState(() {
+                                      columnasGrid = (columnasGrid == 3) ? 2 : 3;
+                                    });
+                                  },
+                                ),
+                                MiniReproductorMusicaFondo(pistas: pistasMusica),
                               ],
                             ),
                           ),
                         ),
+                      if (seccionActual == 'audiolibros' || seccionActual == 'videos' || seccionActual == 'documentos')
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '${librosMostrados.length} ${librosMostrados.length == 1 ? "archivo" : "archivos"}',
+                                style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w500),
+                              ),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: Icon(
+                                      columnasGrid == 3 ? Icons.grid_view_rounded : Icons.view_module_rounded,
+                                      color: ColoresApp.acento,
+                                      size: 20,
+                                    ),
+                                    tooltip: columnasGrid == 3 ? 'Vista de 2 columnas' : 'Vista de 3 columnas',
+                                    onPressed: () {
+                                      setState(() {
+                                        columnasGrid = (columnasGrid == 3) ? 2 : 3;
+                                      });
+                                    },
+                                  ),
+                                  MiniReproductorMusicaFondo(pistas: pistasMusica),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      AnimatedBuilder(
+                        animation: AudioGlobal(),
+                        builder: (context, _) {
+                          final audio = AudioGlobal();
+                          if (audio.tituloActual == null) return const SizedBox.shrink();
+                          return Container(
+                            width: double.infinity,
+                            color: ColoresApp.fondoTarjeta,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  audio.sonando ? Icons.graphic_eq : Icons.music_note,
+                                  color: ColoresApp.acento,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    audio.sonando ? '🎶 Sonando: ${audio.tituloActual}' : '⏸️ En pausa: ${audio.tituloActual}',
+                                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                IconButton(
+                                  icon: Icon(
+                                    audio.sonando ? Icons.pause_circle_filled_rounded : Icons.play_circle_fill_rounded,
+                                    color: audio.sonando ? Colors.amber : ColoresApp.acento,
+                                    size: 26,
+                                  ),
+                                  tooltip: audio.sonando ? 'Pausar música' : 'Reproducir música',
+                                  onPressed: () => audio.pausarOReanudar(),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.stop_rounded, color: Colors.redAccent, size: 24),
+                                  tooltip: 'Detener música',
+                                  onPressed: () => audio.detener(),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                       Expanded(
                         child: seccionActual == 'descargar'
                             ? const PantallaBibliotecasDirectas()
